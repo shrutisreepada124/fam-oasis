@@ -1,22 +1,9 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { fullScan, overallLevel, SAFETY_META, profileById, highlightText } from '@/lib/scanner';
-import type { ScanResult, SafetyLevel, FullScanResult, IngredientFinding, ProfileId } from '@/lib/types';
+import type { ScanResult, SafetyLevel, FullScanResult, IngredientFinding } from '@/lib/types';
 import { FAMILY, PROFILE_ORDER } from '@/lib/family';
-import { SAMPLE_LABELS } from '@/lib/sampleLabels';
-import type { TesseractStatic } from '@/vite-env';
-
-declare global {
-  interface Window {
-    Tesseract?: TesseractStatic;
-  }
-}
-
-import {
-  ShieldAlert, ShieldCheck, ShieldQuestion, ScanLine, Upload, X,
-  AlertTriangle, FileText, History, Trash2, ChevronRight, Sparkles, Info,
-  Search, ExternalLink, Image as ImageIcon, Loader2, Check,
-} from 'lucide-react';
+import { ShieldAlert, ShieldCheck, ShieldQuestion, ScanLine, TriangleAlert as AlertTriangle, History, Trash2, ChevronRight, Info, Search, X, Loader as Loader2, Package, CreditCard as Edit3 } from 'lucide-react';
 
 interface HistoryRow {
   id: string;
@@ -26,38 +13,25 @@ interface HistoryRow {
   scanned_at: string;
 }
 
-type View = 'input' | 'results';
-
-let tesseractPromise: Promise<TesseractStatic> | null = null;
-
-function loadTesseract(): Promise<TesseractStatic> {
-  if (tesseractPromise) return tesseractPromise;
-  tesseractPromise = new Promise((resolve, reject) => {
-    if (window.Tesseract) { resolve(window.Tesseract); return; }
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js';
-    script.async = true;
-    script.onload = () => {
-      if (window.Tesseract) resolve(window.Tesseract);
-      else reject(new Error('Tesseract failed to initialize'));
-    };
-    script.onerror = () => reject(new Error('Failed to load OCR engine'));
-    document.head.appendChild(script);
-  });
-  return tesseractPromise;
+interface SearchResult {
+  productName: string;
+  ingredients: string;
+  brand: string | null;
+  imageUrl: string | null;
 }
 
+type View = 'search' | 'results' | 'manual';
+
 export function ScannerScreen() {
-  const [foodName, setFoodName] = useState(''); // NEW: For the food search input
-  const [input, setInput] = useState(''); // Keeps the actual ingredients text for the results view
-  const [view, setView] = useState<View>('input');
+  const [foodName, setFoodName] = useState('');
+  const [view, setView] = useState<View>('search');
   const [scan, setScan] = useState<FullScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [productInfo, setProductInfo] = useState<SearchResult | null>(null);
+  const [manualText, setManualText] = useState('');
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const imageRef = useRef<HTMLInputElement>(null);
 
   const loadHistory = useCallback(async () => {
     const { data, error } = await supabase
@@ -71,128 +45,106 @@ export function ScannerScreen() {
 
   useEffect(() => { loadHistory(); }, [loadHistory]);
 
-  async function handleSearchAndScan() {
-    if (!foodName.trim()) return;
-    
+  async function handleSearch() {
+    const query = foodName.trim();
+    if (!query) return;
+
     setScanning(true);
     setSearchError(null);
-    
+    setScan(null);
+
     try {
-      // 1. Search for the food item's ingredients
-      const res = await fetch(https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(foodName)}&search_simple=1&action=process&json=1);
+      const res = await fetch(
+        `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&fields=product_name,brands,image_url,ingredients_text_en,ingredients_text`
+      );
+      if (!res.ok) throw new Error('Could not reach the food database.');
       const data = await res.json();
-      
+
       if (!data.products || data.products.length === 0) {
-        throw new Error("Food item not found.");
+        throw new Error('No matching product found. Try a different name or enter ingredients manually.');
       }
 
-      // Extract ingredients from the top search result
       const product = data.products[0];
-      const ingredients = product.ingredients_text_en || product.ingredients_text;
-      
-      if (!ingredients) {
-        throw new Error("Ingredients not listed for this product.");
+      const ingredients = product.ingredients_text_en || product.ingredients_text || '';
+
+      if (!ingredients.trim()) {
+        throw new Error('Ingredients not listed for this product. Try another result or enter them manually.');
       }
 
-      // 2. Set the found ingredients so your ResultsView can highlight them
-      setInput(ingredients);
-      setView('results');
-      
-      // 3. Run your existing family restriction check
       const result = fullScan(ingredients);
       setScan(result);
+      setProductInfo({
+        productName: product.product_name || query,
+        ingredients,
+        brand: product.brands || null,
+        imageUrl: product.image_url || null,
+      });
+      setView('results');
 
-      // 4. Save to your Supabase history
       const { error } = await supabase.from('scan_history').insert({
         label_text: ingredients,
-        label_name: product.product_name || foodName,
+        label_name: product.product_name || query,
         overall: result.overall,
       });
       if (error) console.error(error);
       loadHistory();
-      
-    } catch (err: any) {
-      console.error(err);
-      setSearchError(err.message || "Could not fetch ingredients. Try another name.");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Could not fetch ingredients. Try another name.';
+      setSearchError(msg);
     } finally {
       setScanning(false);
     }
   }
 
-  function guessLabelName(text: string): string {
-    const line = text.split('\n')[0] || '';
-    const match = line.match(/ingredients:\s*(.+)/i);
-    if (match) return match[1].split(',')[0].slice(0, 40);
-    return line.slice(0, 40) || 'Scanned label';
-  }
+  async function handleManualScan() {
+    const text = manualText.trim();
+    if (!text) return;
 
-  function handleClear() {
-    setInput('');
-    setScan(null);
-    setView('input');
-  }
+    setScanning(true);
+    setSearchError(null);
 
-  function loadSample(sample: string) {
-    setInput(sample);
-    setView('input');
-    setScan(null);
-  }
-
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.type.startsWith('image/')) {
-      await runOcr(file);
-    } else {
-      const text = await file.text();
-      setInput(text.slice(0, 5000));
-      setView('input');
-      setScan(null);
-    }
-  }
-
-  async function runOcr(file: File) {
-    setOcrLoading(true);
-    setOcrError(null);
-    setView('input');
     try {
-      const Tesseract = await loadTesseract();
-      const worker = await Tesseract.createWorker('eng');
-      const { data: { text } } = await worker.recognize(file);
-      await worker.terminate();
-      const cleaned = cleanOcrText(text);
-      if (cleaned) {
-        setInput(cleaned.slice(0, 5000));
-        setScan(null);
-      } else {
-        setOcrError('No text was detected in the image. Try a clearer photo or paste the ingredients manually.');
-      }
-    } catch {
-      setOcrError('Could not read the image. Please try again or paste the text manually.');
+      const result = fullScan(text);
+      setScan(result);
+      setProductInfo({
+        productName: 'Manually entered',
+        ingredients: text,
+        brand: null,
+        imageUrl: null,
+      });
+      setView('results');
+
+      const { error } = await supabase.from('scan_history').insert({
+        label_text: text,
+        label_name: 'Manually entered',
+        overall: result.overall,
+      });
+      if (error) console.error(error);
+      loadHistory();
     } finally {
-      setOcrLoading(false);
+      setScanning(false);
     }
   }
 
-  function cleanOcrText(raw: string): string {
-    return raw
-      .replace(/[|~]/g, '')
-      .replace(/\r/g, '\n')
-      .replace(/[ \t]+/g, ' ')
-      .replace(/\s*\n\s*/g, '\n')
-      .replace(/\n{2,}/g, '\n')
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0)
-      .join('\n')
-      .trim();
+  function handleReset() {
+    setView('search');
+    setScan(null);
+    setProductInfo(null);
+    setSearchError(null);
+    setManualText('');
   }
 
   async function loadFromHistory(row: HistoryRow) {
-    setInput(row.label_text);
+    const result = fullScan(row.label_text);
+    setScan(result);
+    setProductInfo({
+      productName: row.label_name || 'Scanned label',
+      ingredients: row.label_text,
+      brand: null,
+      imageUrl: null,
+    });
     setShowHistory(false);
-    setView('input');
-    setScan(null);
+    setView('results');
   }
 
   async function deleteHistoryItem(id: string) {
@@ -201,15 +153,12 @@ export function ScannerScreen() {
     if (error) console.error(error);
   }
 
-  const overall = scan?.overall ?? null;
-  const meta = overall ? SAFETY_META[overall] : null;
-
   return (
     <div className="px-4 pb-24 pt-2">
       <div className="mb-3 flex items-start justify-between">
         <div>
           <h2 className="text-xl font-bold text-ink-900">Allergen & Label Scanner</h2>
-          <p className="text-sm text-ink-500 mt-0.5">Check food ingredients against every family restriction list.</p>
+          <p className="text-sm text-ink-500 mt-0.5">Search any food item and check it against every family member.</p>
         </div>
         <button
           onClick={() => setShowHistory((v) => !v)}
@@ -222,7 +171,6 @@ export function ScannerScreen() {
         </button>
       </div>
 
-      {/* History panel */}
       {showHistory && (
         <HistoryPanel
           history={history}
@@ -232,54 +180,52 @@ export function ScannerScreen() {
         />
       )}
 
-      {!showHistory && view === 'input' && (
-        <InputView
+      {!showHistory && view === 'search' && (
+        <SearchView
           foodName={foodName}
           setFoodName={setFoodName}
           scanning={scanning}
           searchError={searchError}
-          onScan={handleSearchAndScan}
-          onClear={handleClear}
-          onUpload={handleUpload}
-          fileRef={fileRef}
-          imageRef={imageRef}
-          onSample={loadSample}
+          onSearch={handleSearch}
+          onManualEnter={() => { setView('manual'); setSearchError(null); }}
         />
       )}
 
-      {!showHistory && view === 'results' && (
-        <ResultsView
-          input={input}
-          scan={scan}
+      {!showHistory && view === 'manual' && (
+        <ManualEntryView
+          manualText={manualText}
+          setManualText={setManualText}
           scanning={scanning}
-          overall={overall}
-          meta={meta}
-          onBack={() => { setView('input'); setScan(null); }}
-          onRescan={handleScan}
+          onScan={handleManualScan}
+          onBack={() => { setView('search'); setSearchError(null); }}
         />
       )}
 
+      {!showHistory && view === 'results' && scan && productInfo && (
+        <ResultsView
+          productInfo={productInfo}
+          scan={scan}
+          onBack={handleReset}
+        />
+      )}
     </div>
   );
 }
 
-/* ---------- Input view ---------- */
+/* ---------- Search view ---------- */
 
-/* ---------- Input view ---------- */
-
-function InputView({
-  foodName, setFoodName, scanning, searchError, onScan, onClear
+function SearchView({
+  foodName, setFoodName, scanning, searchError, onSearch, onManualEnter,
 }: {
   foodName: string;
   setFoodName: (v: string) => void;
   scanning: boolean;
   searchError: string | null;
-  onScan: () => void;
-  onClear: () => void;
+  onSearch: () => void;
+  onManualEnter: () => void;
 }) {
   return (
     <>
-      {/* Input card */}
       <div className="rounded-3xl bg-white shadow-card p-4 animate-slide-up">
         <div className="flex items-center justify-between mb-2.5">
           <div className="flex items-center gap-1.5 text-sm font-medium text-ink-700">
@@ -287,7 +233,7 @@ function InputView({
             Search for a Food Item
           </div>
           {foodName && (
-            <button onClick={() => { setFoodName(''); onClear(); }} className="text-xs text-ink-400 flex items-center gap-0.5 tap-scale">
+            <button onClick={() => setFoodName('')} className="text-xs text-ink-400 flex items-center gap-0.5 tap-scale">
               <X className="h-3 w-3" /> Clear
             </button>
           )}
@@ -297,12 +243,11 @@ function InputView({
           type="text"
           value={foodName}
           onChange={(e) => setFoodName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') onScan(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !scanning) onSearch(); }}
           placeholder="e.g. Doritos Nacho Cheese, Heinz Ketchup"
           className="w-full rounded-2xl bg-ink-50 border border-ink-200 p-3 text-sm text-ink-800 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-300 focus:border-transparent transition-all"
         />
 
-        {/* Search error banner */}
         {searchError && (
           <div className="mt-2.5 flex items-start gap-2 rounded-2xl bg-amber-50 p-3 ring-1 ring-amber-200">
             <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
@@ -310,26 +255,31 @@ function InputView({
           </div>
         )}
 
-        {/* Primary action button */}
-        <div className="mt-3 flex gap-2">
-          <button
-            onClick={onScan}
-            disabled={!foodName.trim() || scanning}
-            className="tap-scale flex-1 flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-600 py-3 text-sm font-semibold text-white shadow-card disabled:opacity-40 disabled:shadow-none transition-all"
-          >
-            {scanning ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Searching & Scanning...
-              </>
-            ) : (
-              <>
-                <Search className="h-4 w-4" />
-                Search & Check Food
-              </>
-            )}
-          </button>
-        </div>
+        <button
+          onClick={onSearch}
+          disabled={!foodName.trim() || scanning}
+          className="tap-scale mt-3 w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-600 py-3 text-sm font-semibold text-white shadow-card disabled:opacity-40 disabled:shadow-none transition-all"
+        >
+          {scanning ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Searching & Analyzing...
+            </>
+          ) : (
+            <>
+              <Search className="h-4 w-4" />
+              Search & Check Food
+            </>
+          )}
+        </button>
+
+        <button
+          onClick={onManualEnter}
+          className="tap-scale mt-2 w-full flex items-center justify-center gap-1.5 rounded-2xl bg-ink-100 py-2.5 text-xs font-medium text-ink-500 transition-all"
+        >
+          <Edit3 className="h-3.5 w-3.5" />
+          Enter ingredients manually instead
+        </button>
       </div>
 
       {/* Family restriction reference */}
@@ -367,42 +317,54 @@ function InputView({
   );
 }
 
-/* ---------- Product name search ---------- */
+/* ---------- Manual entry view ---------- */
 
-function ProductSearchPanel() {
-  const [productName, setProductName] = useState('');
-  const trimmed = productName.trim();
-
-  function openIngredientSearch() {
-    if (!trimmed) return;
-    const query = encodeURIComponent(`${trimmed} ingredients`);
-    window.open(`https://www.google.com/search?q=${query}`, '_blank', 'noopener,noreferrer');
-  }
-
+function ManualEntryView({
+  manualText, setManualText, scanning, onScan, onBack,
+}: {
+  manualText: string;
+  setManualText: (v: string) => void;
+  scanning: boolean;
+  onScan: () => void;
+  onBack: () => void;
+}) {
   return (
-    <div className="mt-2.5 rounded-2xl bg-ink-50 p-3 animate-slide-up">
-      <label htmlFor="product-name" className="text-xs font-medium text-ink-600">
-        Product name
-      </label>
-      <input
-        id="product-name"
-        value={productName}
-        onChange={(e) => setProductName(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') openIngredientSearch(); }}
-        placeholder="e.g. Heinz Tomato Ketchup"
-        className="mt-1.5 w-full rounded-xl bg-white border border-ink-200 px-3 py-2 text-sm text-ink-800 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-300 focus:border-transparent transition-all"
-      />
-      <button
-        onClick={openIngredientSearch}
-        disabled={!trimmed}
-        className="tap-scale mt-2 w-full flex items-center justify-center gap-2 rounded-xl bg-brand-500 py-2.5 text-sm font-semibold text-white disabled:opacity-40 transition-all"
-      >
-        <ExternalLink className="h-4 w-4" />
-        Search ingredients on Google
+    <div className="animate-tab-slide">
+      <button onClick={onBack} className="tap-scale mb-3 flex items-center gap-1 text-sm font-medium text-brand-600">
+        <ChevronRight className="h-4 w-4 rotate-180" />
+        Back to search
       </button>
-      <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
-        Google opens in a new tab. Copy the ingredient list from the results and paste it into the label box above.
-      </p>
+
+      <div className="rounded-3xl bg-white shadow-card p-4 animate-slide-up">
+        <div className="flex items-center gap-1.5 text-sm font-medium text-ink-700 mb-2.5">
+          <Edit3 className="h-4 w-4 text-brand-500" />
+          Paste Ingredient List
+        </div>
+        <textarea
+          value={manualText}
+          onChange={(e) => setManualText(e.target.value.slice(0, 5000))}
+          placeholder="Paste the full ingredients list here, e.g.&#10;INGREDIENTS: Enriched flour, sugar, cocoa, salt..."
+          rows={8}
+          className="w-full rounded-2xl bg-ink-50 border border-ink-200 p-3 text-sm text-ink-800 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-300 focus:border-transparent transition-all resize-none"
+        />
+        <button
+          onClick={onScan}
+          disabled={!manualText.trim() || scanning}
+          className="tap-scale mt-3 w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-600 py-3 text-sm font-semibold text-white shadow-card disabled:opacity-40 disabled:shadow-none transition-all"
+        >
+          {scanning ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Analyzing...
+            </>
+          ) : (
+            <>
+              <ScanLine className="h-4 w-4" />
+              Check Ingredients
+            </>
+          )}
+        </button>
+      </div>
     </div>
   );
 }
@@ -410,50 +372,58 @@ function ProductSearchPanel() {
 /* ---------- Results view ---------- */
 
 function ResultsView({
-  input, scan, scanning, overall, meta, onBack, onRescan,
+  productInfo, scan, onBack,
 }: {
-  input: string;
-  scan: FullScanResult | null;
-  scanning: boolean;
-  overall: SafetyLevel | null;
-  meta: typeof SAFETY_META[SafetyLevel] | null;
+  productInfo: SearchResult;
+  scan: FullScanResult;
   onBack: () => void;
-  onRescan: () => void;
 }) {
-  if (scanning || !scan || !meta) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 animate-fade-in">
-        <div className="relative">
-          <div className="h-16 w-16 rounded-full border-4 border-ink-200" />
-          <div className="absolute inset-0 h-16 w-16 rounded-full border-4 border-transparent border-t-brand-500 animate-spin" />
-          <ScanLine className="absolute inset-0 m-auto h-6 w-6 text-brand-500" />
-        </div>
-        <p className="mt-4 text-sm font-medium text-ink-500">Analyzing label against family profiles...</p>
-      </div>
-    );
-  }
+  const meta = SAFETY_META[scan.overall];
 
   return (
     <div className="animate-tab-slide">
       <button onClick={onBack} className="tap-scale mb-3 flex items-center gap-1 text-sm font-medium text-brand-600">
         <ChevronRight className="h-4 w-4 rotate-180" />
-        Back to input
+        New search
       </button>
 
+      {/* Product header */}
+      <div className="rounded-3xl bg-white shadow-card p-4 animate-slide-up">
+        <div className="flex items-start gap-3">
+          {productInfo.imageUrl ? (
+            <img
+              src={productInfo.imageUrl}
+              alt={productInfo.productName}
+              className="h-16 w-16 rounded-2xl object-cover shrink-0 bg-ink-100"
+            />
+          ) : (
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-ink-50 to-ink-100 shrink-0">
+              <Package className="h-7 w-7 text-ink-400" />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-base font-bold text-ink-900 leading-tight">{productInfo.productName}</p>
+            {productInfo.brand && (
+              <p className="text-xs text-ink-500 mt-0.5">{productInfo.brand}</p>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Overall banner */}
-      <div className={`rounded-3xl p-4 animate-slide-up ${meta.bg} ring-1 ${meta.ring}`}>
+      <div className={`mt-3 rounded-3xl p-4 animate-slide-up ${meta.bg} ring-1 ${meta.ring}`}>
         <div className="flex items-center gap-3">
           <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${meta.text} bg-white/60`}>
-            {overall === 'safe' ? <ShieldCheck className="h-6 w-6" /> : overall === 'caution' ? <ShieldQuestion className="h-6 w-6" /> : <ShieldAlert className="h-6 w-6" />}
+            {scan.overall === 'safe' ? <ShieldCheck className="h-6 w-6" /> : scan.overall === 'caution' ? <ShieldQuestion className="h-6 w-6" /> : <ShieldAlert className="h-6 w-6" />}
           </div>
           <div className="flex-1">
             <p className="text-sm font-bold text-ink-800">
-              {overall === 'safe' ? 'All Clear' : overall === 'caution' ? 'Proceed with Caution' : 'Safety Risk Detected'}
+              {scan.overall === 'safe' ? 'All Clear' : scan.overall === 'caution' ? 'Proceed with Caution' : 'Safety Risk Detected'}
             </p>
             <p className="text-xs text-ink-600 mt-0.5">
-              {overall === 'safe'
+              {scan.overall === 'safe'
                 ? 'No flagged allergens for any family member.'
-                : overall === 'caution'
+                : scan.overall === 'caution'
                 ? 'Some profiles need attention — review below.'
                 : 'Not safe for one or more family members.'}
             </p>
@@ -461,8 +431,8 @@ function ResultsView({
         </div>
       </div>
 
-      {/* Highlighted text */}
-      <HighlightedText text={input} findings={scan.findings} />
+      {/* Highlighted ingredient text */}
+      <HighlightedText text={productInfo.ingredients} findings={scan.findings} />
 
       {/* Ingredient breakdown */}
       {scan.findings.length > 0 && (
@@ -487,11 +457,11 @@ function ResultsView({
       </div>
 
       <button
-        onClick={onRescan}
+        onClick={onBack}
         className="tap-scale mt-4 w-full flex items-center justify-center gap-2 rounded-2xl bg-ink-100 py-3 text-sm font-medium text-ink-600 transition-all"
       >
-        <ScanLine className="h-4 w-4" />
-        Re-scan
+        <Search className="h-4 w-4" />
+        Search another food
       </button>
     </div>
   );
@@ -503,7 +473,7 @@ function HighlightedText({ text, findings }: { text: string; findings: Ingredien
   const segments = highlightText(text, findings);
   return (
     <div className="mt-3 rounded-3xl bg-white shadow-card p-4 animate-slide-up">
-      <p className="text-xs font-medium text-ink-400 uppercase tracking-wide mb-2">Scanned Label</p>
+      <p className="text-xs font-medium text-ink-400 uppercase tracking-wide mb-2">Ingredient List</p>
       <div className="rounded-2xl bg-ink-50 p-3 text-sm leading-relaxed text-ink-600 whitespace-pre-wrap break-words max-h-48 overflow-y-auto no-scrollbar">
         {segments.map((seg, i) => {
           if (seg.level === null) return <span key={i}>{seg.text}</span>;
@@ -626,7 +596,7 @@ function HistoryPanel({
         <div className="rounded-3xl bg-white shadow-card p-8 text-center">
           <History className="h-8 w-8 text-ink-300 mx-auto mb-2" />
           <p className="text-sm text-ink-400">No scans yet</p>
-          <p className="text-xs text-ink-300 mt-0.5">Your past label scans will appear here.</p>
+          <p className="text-xs text-ink-300 mt-0.5">Your past food searches will appear here.</p>
         </div>
       ) : (
         <div className="space-y-2">
