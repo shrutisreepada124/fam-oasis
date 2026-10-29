@@ -55,21 +55,19 @@ export function ScannerScreen() {
 
     try {
       const res = await fetch(
-        `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&fields=product_name,brands,image_url,ingredients_text_en,ingredients_text`
+        `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=15&fields=product_name,brands,image_url,ingredients_text_en,ingredients_text`
       );
       if (!res.ok) throw new Error('Could not reach the food database.');
       const data = await res.json();
 
-      if (!data.products || data.products.length === 0) {
-        throw new Error('No matching product found. Try a different name or enter ingredients manually.');
+      const products: Array<Record<string, string | null>> = Array.isArray(data.products) ? data.products : [];
+      const product = products.find((p) => (p.ingredients_text_en || p.ingredients_text || '').trim());
+
+      if (!product) {
+        throw new Error('No matching product with an ingredient list was found. Try a more specific name or enter ingredients manually.');
       }
 
-      const product = data.products[0];
-      const ingredients = product.ingredients_text_en || product.ingredients_text || '';
-
-      if (!ingredients.trim()) {
-        throw new Error('Ingredients not listed for this product. Try another result or enter them manually.');
-      }
+      const ingredients = (product.ingredients_text_en || product.ingredients_text || '').trim();
 
       const result = fullScan(ingredients);
       setScan(result);
