@@ -265,123 +265,71 @@ export function ScannerScreen() {
 
 /* ---------- Input view ---------- */
 
+/* ---------- Input view ---------- */
+
 function InputView({
-  input, setInput, scanning, ocrLoading, ocrError, onScan, onClear, onUpload, fileRef, imageRef, onSample,
+  foodName, setFoodName, scanning, searchError, onScan, onClear
 }: {
-  input: string;
-  setInput: (v: string) => void;
+  foodName: string;
+  setFoodName: (v: string) => void;
   scanning: boolean;
-  ocrLoading: boolean;
-  ocrError: string | null;
+  searchError: string | null;
   onScan: () => void;
   onClear: () => void;
-  onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  fileRef: React.RefObject<HTMLInputElement>;
-  imageRef: React.RefObject<HTMLInputElement>;
-  onSample: (s: string) => void;
 }) {
-  const [productOpen, setProductOpen] = useState(false);
   return (
     <>
-      {/* OCR loading overlay */}
-      {ocrLoading && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-ink-900/60 backdrop-blur-sm animate-fade-in">
-          <div className="rounded-3xl bg-white p-8 mx-6 max-w-xs text-center shadow-card-lg">
-            <div className="relative mx-auto h-16 w-16">
-              <div className="h-16 w-16 rounded-full border-4 border-ink-100" />
-              <div className="absolute inset-0 h-16 w-16 rounded-full border-4 border-transparent border-t-brand-500 animate-spin" />
-              <ScanLine className="absolute inset-0 m-auto h-6 w-6 text-brand-500" />
-            </div>
-            <p className="mt-4 text-sm font-semibold text-ink-800">
-              Reading label...
-            </p>
-            <p className="text-xs text-ink-400 mt-1">
-              Extracting text from your photo
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* Input card */}
       <div className="rounded-3xl bg-white shadow-card p-4 animate-slide-up">
         <div className="flex items-center justify-between mb-2.5">
           <div className="flex items-center gap-1.5 text-sm font-medium text-ink-700">
-            <FileText className="h-4 w-4 text-brand-500" />
-            Label ingredients
+            <Search className="h-4 w-4 text-brand-500" />
+            Search for a Food Item
           </div>
-          {input && (
-            <button onClick={onClear} className="text-xs text-ink-400 flex items-center gap-0.5 tap-scale">
+          {foodName && (
+            <button onClick={() => { setFoodName(''); onClear(); }} className="text-xs text-ink-400 flex items-center gap-0.5 tap-scale">
               <X className="h-3 w-3" /> Clear
             </button>
           )}
         </div>
 
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Paste the ingredient list, take a photo, or upload a label image. Include 'CONTAINS:', 'MAY CONTAIN:', and Nutrition Facts for the most accurate scan."
-          className="w-full resize-none rounded-2xl bg-ink-50 border border-ink-200 p-3 text-sm text-ink-800 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-300 focus:border-transparent transition-all"
-          rows={5}
+        <input
+          type="text"
+          value={foodName}
+          onChange={(e) => setFoodName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onScan(); }}
+          placeholder="e.g. Doritos Nacho Cheese, Heinz Ketchup"
+          className="w-full rounded-2xl bg-ink-50 border border-ink-200 p-3 text-sm text-ink-800 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-300 focus:border-transparent transition-all"
         />
 
-        {/* OCR error banner */}
-        {ocrError && (
+        {/* Search error banner */}
+        {searchError && (
           <div className="mt-2.5 flex items-start gap-2 rounded-2xl bg-amber-50 p-3 ring-1 ring-amber-200">
             <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-            <p className="text-xs text-amber-700">{ocrError}</p>
+            <p className="text-xs text-amber-700">{searchError}</p>
           </div>
         )}
 
-        {/* Primary action buttons */}
+        {/* Primary action button */}
         <div className="mt-3 flex gap-2">
           <button
             onClick={onScan}
-            disabled={!input.trim() || scanning || ocrLoading}
+            disabled={!foodName.trim() || scanning}
             className="tap-scale flex-1 flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-600 py-3 text-sm font-semibold text-white shadow-card disabled:opacity-40 disabled:shadow-none transition-all"
           >
             {scanning ? (
               <>
-                <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Scanning...
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Searching & Scanning...
               </>
             ) : (
               <>
-                <ScanLine className="h-4 w-4" />
-                Scan Label
+                <Search className="h-4 w-4" />
+                Search & Check Food
               </>
             )}
           </button>
         </div>
-
-        {/* Capture / upload row */}
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          <button
-            onClick={() => setProductOpen((v) => !v)}
-            className={`tap-scale flex flex-col items-center justify-center gap-1 rounded-2xl py-2.5 text-xs font-medium transition-all ${
-              productOpen ? 'bg-brand-500 text-white' : 'bg-brand-50 text-brand-600 hover:bg-brand-100'
-            }`}
-          >
-            <Search className="h-4 w-4" />
-            Product name
-          </button>
-          <button
-            onClick={() => imageRef.current?.click()}
-            className="tap-scale flex flex-col items-center justify-center gap-1 rounded-2xl bg-ink-100 py-2.5 text-xs font-medium text-ink-600 transition-all hover:bg-ink-200"
-          >
-            <ImageIcon className="h-4 w-4" />
-            Photo
-          </button>
-          <button
-            onClick={() => fileRef.current?.click()}
-            className="tap-scale flex flex-col items-center justify-center gap-1 rounded-2xl bg-ink-100 py-2.5 text-xs font-medium text-ink-600 transition-all hover:bg-ink-200"
-          >
-            <Upload className="h-4 w-4" />
-            Text file
-          </button>
-        </div>
-        {productOpen && <ProductSearchPanel />}
-        <input ref={fileRef} type="file" accept=".txt,.csv,.md" onChange={onUpload} className="hidden" />
-        <input ref={imageRef} type="file" accept="image/*" onChange={onUpload} className="hidden" />
       </div>
 
       {/* Family restriction reference */}
@@ -415,27 +363,6 @@ function InputView({
           })}
         </div>
       </div>
-
-      {/* Sample labels */}
-      {!input && !ocrLoading && (
-        <div className="mt-4 animate-slide-up">
-          <p className="text-xs font-medium text-ink-400 uppercase tracking-wide mb-2 flex items-center gap-1">
-            <Sparkles className="h-3 w-3" /> Try a sample
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            {SAMPLE_LABELS.map((s) => (
-              <button
-                key={s.name}
-                onClick={() => onSample(s.text)}
-                className="tap-scale rounded-2xl bg-white shadow-pill p-3 text-left transition-all hover:shadow-card"
-              >
-                <p className="text-sm font-medium text-ink-800">{s.name}</p>
-                <p className="text-[11px] text-ink-400 mt-0.5 line-clamp-2">Tap to load & scan</p>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </>
   );
 }
