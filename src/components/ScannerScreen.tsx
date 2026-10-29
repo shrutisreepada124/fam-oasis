@@ -48,12 +48,12 @@ function loadTesseract(): Promise<TesseractStatic> {
 }
 
 export function ScannerScreen() {
-  const [input, setInput] = useState('');
+  const [foodName, setFoodName] = useState(''); // NEW: For the food search input
+  const [input, setInput] = useState(''); // Keeps the actual ingredients text for the results view
   const [view, setView] = useState<View>('input');
   const [scan, setScan] = useState<FullScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [ocrLoading, setOcrLoading] = useState(false);
-  const [ocrError, setOcrError] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
