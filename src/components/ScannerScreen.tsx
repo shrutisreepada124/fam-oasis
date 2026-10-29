@@ -234,12 +234,11 @@ export function ScannerScreen() {
 
       {!showHistory && view === 'input' && (
         <InputView
-          input={input}
-          setInput={setInput}
+          foodName={foodName}
+          setFoodName={setFoodName}
           scanning={scanning}
-          ocrLoading={ocrLoading}
-          ocrError={ocrError}
-          onScan={handleScan}
+          searchError={searchError}
+          onScan={handleSearchAndScan}
           onClear={handleClear}
           onUpload={handleUpload}
           fileRef={fileRef}
