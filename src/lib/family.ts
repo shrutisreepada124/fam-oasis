@@ -1,0 +1,51 @@
+import type { FamilyProfile, ProfileId } from './types';
+
+export const FAMILY: Record<ProfileId, FamilyProfile> = {
+  mom: {
+    id: 'mom',
+    name: 'Mom',
+    role: 'Mother',
+    emoji: '👩',
+    color: '#2563eb',
+    gradient: 'from-blue-500 to-blue-600',
+    diet: 'Keto',
+    dietTags: ['keto'],
+    allergens: [],
+    restrictions: ['low-carb', 'high-fat', 'no added sugar'],
+    dailySodiumMg: 2300,
+    dailyCarbG: 50,
+    notes: 'Strict keto. Keep net carbs under 50g per day. Fats encouraged.',
+  },
+  son: {
+    id: 'son',
+    name: 'Son',
+    role: 'Son',
+    emoji: '👦',
+    color: '#ef4444',
+    gradient: 'from-red-500 to-rose-600',
+    diet: 'Severe Peanut Allergy',
+    dietTags: ['peanut-free', 'nut-free'],
+    allergens: ['peanuts', 'peanut oil', 'ground nuts', 'arachis hypogaea', 'mandelona nuts', 'tree nuts'],
+    restrictions: ['peanut-free', 'tree-nut-free'],
+    dailySodiumMg: 1900,
+    dailyCarbG: 130,
+    notes: 'Severe allergy. Avoid all peanut derivatives and cross-contamination. Carry EpiPen.',
+  },
+  grandma: {
+    id: 'grandma',
+    name: 'Grandma',
+    role: 'Grandmother',
+    emoji: '👵',
+    color: '#059669',
+    gradient: 'from-emerald-500 to-teal-600',
+    diet: 'Low Sodium / Diabetic',
+    dietTags: ['low-sodium', 'diabetic'],
+    allergens: [],
+    restrictions: ['sodium < 1500mg/meal', 'low sugar', 'complex carbs only'],
+    dailySodiumMg: 1500,
+    dailyCarbG: 165,
+    notes: 'Low sodium and diabetic-friendly. Limit sodium per meal. Avoid refined sugar and simple carbs.',
+  },
+};
+
+export const PROFILE_ORDER: ProfileId[] = ['mom', 'son', 'grandma'];
