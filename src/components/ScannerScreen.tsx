@@ -71,23 +71,52 @@ export function ScannerScreen() {
 
   useEffect(() => { loadHistory(); }, [loadHistory]);
 
-  async function handleScan() {
-    if (!input.trim()) return;
+  async function handleSearchAndScan() {
+    if (!foodName.trim()) return;
+    
     setScanning(true);
-    setView('results');
-    setScan(null);
-    setTimeout(async () => {
-      const result = fullScan(input);
+    setSearchError(null);
+    
+    try {
+      // 1. Search for the food item's ingredients
+      const res = await fetch(https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(foodName)}&search_simple=1&action=process&json=1);
+      const data = await res.json();
+      
+      if (!data.products || data.products.length === 0) {
+        throw new Error("Food item not found.");
+      }
+
+      // Extract ingredients from the top search result
+      const product = data.products[0];
+      const ingredients = product.ingredients_text_en || product.ingredients_text;
+      
+      if (!ingredients) {
+        throw new Error("Ingredients not listed for this product.");
+      }
+
+      // 2. Set the found ingredients so your ResultsView can highlight them
+      setInput(ingredients);
+      setView('results');
+      
+      // 3. Run your existing family restriction check
+      const result = fullScan(ingredients);
       setScan(result);
-      setScanning(false);
+
+      // 4. Save to your Supabase history
       const { error } = await supabase.from('scan_history').insert({
-        label_text: input,
-        label_name: guessLabelName(input),
+        label_text: ingredients,
+        label_name: product.product_name || foodName,
         overall: result.overall,
       });
       if (error) console.error(error);
       loadHistory();
-    }, 600);
+      
+    } catch (err: any) {
+      console.error(err);
+      setSearchError(err.message || "Could not fetch ingredients. Try another name.");
+    } finally {
+      setScanning(false);
+    }
   }
 
   function guessLabelName(text: string): string {
